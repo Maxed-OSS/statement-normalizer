@@ -1,0 +1,15 @@
+FIRST COMMUNITY BANK
+Account Statement - Checking
+Statement Period: 01/01/2024 to 01/31/2024
+Account Number: ****4821
+
+Date        Description                          Amount        Balance
+01/03/2024  OPENING BALANCE                        0.00      2,000.00
+01/05/2024  COFFEE ROASTERS #221                  -4.75      1,995.25
+01/06/2024  PAYROLL DEPOSIT ACME CORP          2,500.00      4,495.25
+01/08/2024  GREEN GROCER MARKET                  -62.40      4,432.85
+01/12/2024  ELECTRIC UTILITY CO                 -118.22      4,314.63
+01/15/2024  REFUND ONLINE RETAILER                33.10      4,347.73
+
+Page 1 of 1
+Thank you for banking with us.
