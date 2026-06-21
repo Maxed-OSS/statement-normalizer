@@ -28,7 +28,9 @@ dev = ["pytest>=7.0"]
 statement-normalizer = "statement_normalizer.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-org/statement-normalizer"
+Homepage = "https://github.com/maxed-oss/statement-normalizer"
+Repository = "https://github.com/maxed-oss/statement-normalizer"
+Issues = "https://github.com/maxed-oss/statement-normalizer/issues"
 
 [tool.setuptools.packages.find]
 include = ["statement_normalizer*"]

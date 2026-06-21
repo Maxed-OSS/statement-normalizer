@@ -1,5 +1,8 @@
 # statement-normalizer
 
+[![CI](https://github.com/maxed-oss/statement-normalizer/actions/workflows/ci.yml/badge.svg)](https://github.com/maxed-oss/statement-normalizer/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 Turn messy bank and credit-card statements into clean, normalized transaction
 JSON. Deterministic, rule-based, dependency-free, and easy to audit.
 
@@ -21,13 +24,33 @@ into an import pipeline, not a full accounting system.
 
 ## What it does
 
-- Parses three common statement shapes:
+- Parses the statement shapes banks and cards actually export:
   - **CSV** — signed-amount or separate debit/credit columns, optional running
-    balance, fuzzy header detection so it works across many banks.
+    balance, fuzzy header detection with a broad alias table covering the
+    real-world headers from Chase, Bank of America, Wells Fargo, Amex, Capital
+    One, Discover and many others.
   - **OFX / QFX** — both the SGML (OFX 1.x) and XML (OFX 2.x) export styles,
     using a small built-in tokenizer (no external OFX dependency).
+  - **MT940** — the SWIFT bank-statement message format (`.sta` / `.940`),
+    common for European business accounts.
+  - **CAMT.053** — ISO 20022 `BankToCustomerStatement` XML, the modern standard
+    replacing MT940. Parsed with the standard-library XML parser, namespace-agnostic.
   - **Text** — line-oriented statement text, e.g. the output of running a PDF
     through a text extractor like `pdftotext`.
+
+### Format support matrix
+
+| Format | Extensions | Direction source | Account id | Strong dedup key | Multi-currency |
+|---|---|---|---|---|---|
+| CSV (signed) | `.csv` | sign of `Amount` (or `--invert-amounts`) | – | content hash | per-row `Currency` col |
+| CSV (debit/credit) | `.csv` | which column is populated | – | content hash | per-row `Currency` col |
+| OFX / QFX | `.ofx` `.qfx` | signed `TRNAMT` | `ACCTID` | `FITID` | `CURDEF` |
+| MT940 | `.sta` `.940` `.mt940` | `D` / `C` mark on `:61:` | `:25:` | content hash | `:60F:` currency |
+| CAMT.053 | `.xml` (sniffed) | `CdtDbtInd` (`DBIT`/`CRDT`) | IBAN / `Othr` id | `AcctSvcrRef` | `Amt@Ccy` |
+| Text / PDF-text | `.txt` | sign / column heuristic | – | content hash | `--currency` default |
+
+All amounts are normalized to one sign convention (debits negative, credits
+positive) regardless of how the source expressed direction.
 - Emits a single normalized [`Transaction`](statement_normalizer/schema.py)
   schema with a consistent sign convention (debits negative, credits positive),
   parsed `date`, `Decimal` `amount`, derived `txn_type`, optional `balance`,
@@ -69,12 +92,43 @@ statement-normalizer statement.csv --pretty
 # Force a format
 statement-normalizer --format ofx export.qfx
 
+# MT940 and CAMT.053 work the same way
+statement-normalizer export.sta --stats
+statement-normalizer --format camt053 statement.xml
+
 # Merge overlapping monthly exports, de-duplicating across them
 statement-normalizer jan.csv feb.csv --merge -o all.json
+
+# Flat CSV instead of JSON
+statement-normalizer statement.ofx --csv -o transactions.csv
+
+# Print a summary (counts, totals, date range) to stderr while still emitting JSON
+statement-normalizer statement.csv --stats
+
+# Read from stdin ('-')
+cat statement.csv | statement-normalizer --format csv -
+
+# Issuers that report charges as positive / payments as negative (e.g. some
+# credit-card exports) — flip the sign into the debit-negative convention
+statement-normalizer amex.csv --invert-amounts
 
 # Set a default currency when the source omits one
 statement-normalizer eu_statement.csv --currency EUR
 ```
+
+### CLI flags
+
+| Flag | Effect |
+|---|---|
+| `--format {csv,ofx,text,mt940,camt053}` | force input format (default: auto-detect) |
+| `--csv` | emit a flat transactions CSV instead of JSON |
+| `--stats` | print a counts/totals/date-range summary to stderr |
+| `--merge` | merge all inputs into one cross-statement-deduped list |
+| `--no-dedup` | disable de-duplication |
+| `--invert-amounts` | flip the sign of CSV single-`Amount`-column values |
+| `--currency CCY` | default currency when the source omits one |
+| `--pretty` | pretty-print JSON |
+| `-o FILE` | write to a file instead of stdout |
 
 ## Usage — Python
 
@@ -98,6 +152,35 @@ Merging multiple files with cross-statement dedup:
 from statement_normalizer.normalize import normalize_many
 
 txns = normalize_many(["jan.ofx", "feb.ofx"])
+```
+
+## Examples
+
+The [`examples/`](examples) directory ships synthetic statements in the shapes
+real banks and cards export, plus a runnable tour:
+
+```bash
+python examples/demo.py
+```
+
+| File | Shape it demonstrates |
+|---|---|
+| `chase_checking.csv` | Chase `Details/Posting Date/Description/Amount/Type/Balance` |
+| `bofa_checking.csv` | Bank of America `Date/Description/Amount/Running Bal.` |
+| `wells_fargo_checking.csv` | Wells Fargo `Date/Amount/*/Payee/Memo` (blank Payee, text in Memo) |
+| `amex_creditcard.csv` | Amex single `Amount` with charges positive (use `--invert-amounts`) |
+| `capital_one_creditcard.csv` | Capital One split `Debit`/`Credit` columns |
+| `discover_creditcard.csv` | Discover `Trans. Date/Amount/Category` (charges positive) |
+| `sample.mt940` | SWIFT MT940 (`:25:`/`:60F:`/`:61:`/`:86:`) |
+| `sample.camt053.xml` | ISO 20022 CAMT.053 (`<Ntry>` / `CdtDbtInd`) |
+| `overlap_jan.csv`, `overlap_feb.csv` | two overlapping months for the dedup/merge demo |
+
+Dedup/merge across overlapping months in one line:
+
+```bash
+statement-normalizer examples/overlap_jan.csv examples/overlap_feb.csv --merge --stats
+# 12 raw rows across the two files -> 9 after the 3 overlapping rows collapse,
+# while a legitimately-repeated same-merchant charge is preserved.
 ```
 
 ## Example output
@@ -157,11 +240,16 @@ normalize to this convention regardless of how the source expressed direction
 ```bash
 pip install -e ".[dev]"
 pytest
+python examples/demo.py   # runnable tour over the synthetic examples
 ```
 
 The test suite runs entirely over synthetic sample statements committed under
-[`tests/fixtures/`](tests/fixtures). No real account data is used anywhere in
-this project; please keep it that way and only commit synthetic fixtures.
+[`tests/fixtures/`](tests/fixtures) and [`examples/`](examples). No real account
+data is used anywhere in this project; please keep it that way and only commit
+synthetic fixtures.
+
+CI runs the tests on Python 3.9–3.13 (plus a macOS/Windows spot-check) and
+builds the sdist + wheel on every push and pull request.
 
 ## License
 

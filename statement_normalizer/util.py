@@ -118,3 +118,19 @@ def first_match(headers: list[str], candidates: tuple[str, ...]) -> Optional[int
         if cand in norm:
             return norm.index(cand)
     return None
+
+
+def all_matches(headers: list[str], candidates: tuple[str, ...]) -> list[int]:
+    """Return header indices matching any candidate, in candidate-priority order.
+
+    Useful when a logical field can live in more than one column and a per-row
+    fallback is needed (e.g. a blank ``Payee`` with the text in ``Memo``).
+    """
+    norm = [normalize_header(h) for h in headers]
+    out: list[int] = []
+    for cand in candidates:
+        if cand in norm:
+            idx = norm.index(cand)
+            if idx not in out:
+                out.append(idx)
+    return out

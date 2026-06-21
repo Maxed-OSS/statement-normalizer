@@ -19,24 +19,85 @@ from decimal import Decimal
 from typing import Optional
 
 from ..schema import NormalizedStatement, Transaction
-from ..util import ParseError, first_match, parse_date, parse_money
+from ..util import ParseError, all_matches, first_match, parse_date, parse_money
 
-_DATE_COLS = ("date", "transactiondate", "postingdate", "posteddate", "postdate")
+# Header aliases are matched fuzzily (lowercased, alphanumerics only) so the
+# real-world variations exported by major banks resolve without per-bank config.
+# The comments below note which banks/cards a given alias is drawn from.
+_DATE_COLS = (
+    "date",
+    "transactiondate",  # Chase, Capital One, Amex
+    "postingdate",  # Chase, BofA
+    "posteddate",  # Wells Fargo
+    "postdate",
+    "posteddate",
+    "transdate",
+    "transactiondateposted",
+    "datemmddyyyy",
+    "effectivedate",  # Discover
+    "processdate",
+)
 _DESC_COLS = (
-    "description",
+    "description",  # Chase, BofA, Capital One, Discover
     "desc",
-    "payee",
-    "memo",
+    "payee",  # Wells Fargo / Quicken-style
+    "memo",  # OFX-derived CSVs
     "name",
     "details",
     "transaction",
-    "narrative",
+    "narrative",  # many UK / international banks
+    "originaldescription",  # Mint / Capital One export
+    "merchant",  # Amex "Merchant"
+    "extendeddetails",  # Amex
+    "transactiondetails",
+    "appearsonyourstatementas",  # Amex literal header
+    "reference",
 )
-_AMOUNT_COLS = ("amount", "amt", "value")
-_DEBIT_COLS = ("debit", "withdrawal", "withdrawals", "debitamount", "moneyout")
-_CREDIT_COLS = ("credit", "deposit", "deposits", "creditamount", "moneyin")
-_BALANCE_COLS = ("balance", "runningbalance", "bal")
-_CURRENCY_COLS = ("currency", "ccy", "currencycode")
+_AMOUNT_COLS = (
+    "amount",  # Chase, Capital One (signed), Amex
+    "amt",
+    "value",
+    "transactionamount",
+    "amountusd",
+    "netamount",
+)
+_DEBIT_COLS = (
+    "debit",  # BofA-style split columns
+    "withdrawal",
+    "withdrawals",  # Wells Fargo
+    "withdrawalamount",
+    "debitamount",
+    "moneyout",  # many UK banks
+    "paymentsandcredits",  # (handled below; Amex sometimes inverts)
+    "charges",
+    "debits",
+)
+_CREDIT_COLS = (
+    "credit",  # BofA-style split columns
+    "deposit",
+    "deposits",  # Wells Fargo
+    "depositamount",
+    "creditamount",
+    "moneyin",  # many UK banks
+    "credits",
+    "payments",
+)
+_BALANCE_COLS = (
+    "balance",  # Wells Fargo, BofA
+    "runningbalance",
+    "bal",
+    "runningbal",
+    "balanceamount",
+    "currentbalance",
+)
+_CURRENCY_COLS = ("currency", "ccy", "currencycode", "transactioncurrency")
+
+# Some issuers (notably Capital One on its "Debit"/"Credit" export) emit BOTH a
+# Debit and a Credit column where Debit holds positive spend and Credit holds
+# positive payments. Others (older Amex CSVs) report charges as POSITIVE in a
+# single Amount column. We keep sign handling in ``_resolve_amount`` purely
+# data-driven (magnitude of whichever column is populated) so no issuer-specific
+# branching is needed.
 
 
 def _to_text(data) -> str:
@@ -45,8 +106,21 @@ def _to_text(data) -> str:
     return data
 
 
-def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
-    """Parse CSV bytes/str into a NormalizedStatement."""
+def parse(
+    data,
+    *,
+    default_currency: str = "USD",
+    invert_amount: bool = False,
+) -> NormalizedStatement:
+    """Parse CSV bytes/str into a NormalizedStatement.
+
+    ``invert_amount`` flips the sign of every parsed amount. This is needed for
+    issuers (e.g. some credit-card exports) that report **charges as positive**
+    and **payments as negative** in a single signed ``Amount`` column, which is
+    the inverse of this library's convention (debits negative, credits positive).
+    It only affects the single-``Amount``-column path; split debit/credit columns
+    already carry unambiguous direction.
+    """
     text = _to_text(data)
     reader = csv.reader(io.StringIO(text))
     rows = [r for r in reader if any(cell.strip() for cell in r)]
@@ -57,7 +131,11 @@ def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
     body = rows[1:]
 
     i_date = first_match(header, _DATE_COLS)
-    i_desc = first_match(header, _DESC_COLS)
+    # Some banks (e.g. Wells Fargo) leave the primary description column ("Payee")
+    # blank and put the real text in a secondary one ("Memo"). Collect every
+    # matching description column so we can fall back to the first non-empty.
+    desc_cols = all_matches(header, _DESC_COLS)
+    i_desc = desc_cols[0] if desc_cols else None
     i_amount = first_match(header, _AMOUNT_COLS)
     i_debit = first_match(header, _DEBIT_COLS)
     i_credit = first_match(header, _CREDIT_COLS)
@@ -86,8 +164,12 @@ def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
         amount = _resolve_amount(row, i_amount, i_debit, i_credit)
         if amount is None or amount == 0:
             continue  # skip zero-amount lines (opening-balance markers, etc.)
+        # Only invert the single signed-Amount path; split debit/credit columns
+        # already encode direction unambiguously.
+        if invert_amount and i_amount is not None and row[i_amount].strip():
+            amount = -amount
 
-        description = row[i_desc].strip() if i_desc is not None else ""
+        description = _resolve_description(row, desc_cols)
         balance = _opt_money(row, i_balance)
         currency = (
             row[i_currency].strip().upper()
@@ -133,6 +215,16 @@ def _resolve_amount(
     if credit is not None and credit != 0:
         return abs(credit)
     return None
+
+
+def _resolve_description(row: list[str], desc_cols: list[int]) -> str:
+    """First non-empty value across all matched description columns."""
+    for idx in desc_cols:
+        if idx < len(row):
+            cell = row[idx].strip()
+            if cell:
+                return cell
+    return ""
 
 
 def _opt_money(row: list[str], idx: Optional[int]) -> Optional[Decimal]:

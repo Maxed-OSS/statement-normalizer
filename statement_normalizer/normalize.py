@@ -6,12 +6,18 @@ import os
 from typing import Optional
 
 from .dedup import dedup_transactions, source_multiplicity
-from .parsers import csv_parser, ofx_parser, text_parser
+from .parsers import (
+    camt053_parser,
+    csv_parser,
+    mt940_parser,
+    ofx_parser,
+    text_parser,
+)
 from .schema import NormalizedStatement, Transaction
 from .util import ParseError
 
 # Format names accepted by ``format=`` overrides.
-FORMATS = ("csv", "ofx", "text")
+FORMATS = ("csv", "ofx", "text", "mt940", "camt053")
 
 
 def detect_format(data, *, filename: Optional[str] = None) -> str:
@@ -25,14 +31,23 @@ def detect_format(data, *, filename: Optional[str] = None) -> str:
             return "ofx"
         if ext == "csv":
             return "csv"
+        if ext in ("sta", "mt940", "940"):
+            return "mt940"
         if ext in ("txt", "text"):
             return "text"
+        # .xml falls through to content sniffing (CAMT vs other XML).
 
     text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
-    head = text.lstrip()[:512].upper()
+    stripped = text.lstrip()
+    head = stripped[:512].upper()
 
     if "<OFX>" in head or "OFXHEADER" in head or "<STMTTRN>" in head:
         return "ofx"
+    if "BKTOCSTMRSTMT" in head or "CAMT.053" in head:
+        return "camt053"
+    # MT940: colon-tag fields (:20: / :25: / :61:).
+    if mt940_parser.looks_like_mt940(text):
+        return "mt940"
     # CSV if the first line has commas and looks like a header row.
     first_line = text.splitlines()[0] if text.splitlines() else ""
     if "," in first_line and not first_line.lstrip().startswith("<"):
@@ -40,13 +55,21 @@ def detect_format(data, *, filename: Optional[str] = None) -> str:
     return "text"
 
 
-def _parse(data, fmt: str, *, default_currency: str) -> NormalizedStatement:
+def _parse(
+    data, fmt: str, *, default_currency: str, invert_amount: bool = False
+) -> NormalizedStatement:
     if fmt == "csv":
-        return csv_parser.parse(data, default_currency=default_currency)
+        return csv_parser.parse(
+            data, default_currency=default_currency, invert_amount=invert_amount
+        )
     if fmt == "ofx":
         return ofx_parser.parse(data, default_currency=default_currency)
     if fmt == "text":
         return text_parser.parse(data, default_currency=default_currency)
+    if fmt == "mt940":
+        return mt940_parser.parse(data, default_currency=default_currency)
+    if fmt == "camt053":
+        return camt053_parser.parse(data, default_currency=default_currency)
     raise ParseError(f"unknown format: {fmt!r}")
 
 
@@ -57,10 +80,13 @@ def normalize_bytes(
     filename: Optional[str] = None,
     default_currency: str = "USD",
     dedup: bool = True,
+    invert_amount: bool = False,
 ) -> NormalizedStatement:
     """Normalize a single statement's bytes/str into a NormalizedStatement."""
     resolved = fmt or detect_format(data, filename=filename)
-    statement = _parse(data, resolved, default_currency=default_currency)
+    statement = _parse(
+        data, resolved, default_currency=default_currency, invert_amount=invert_amount
+    )
     if dedup:
         mult = source_multiplicity(statement.transactions)
         statement.transactions = dedup_transactions(
@@ -75,6 +101,7 @@ def normalize_file(
     fmt: Optional[str] = None,
     default_currency: str = "USD",
     dedup: bool = True,
+    invert_amount: bool = False,
 ) -> NormalizedStatement:
     """Normalize a statement file on disk."""
     with open(path, "rb") as fh:
@@ -85,15 +112,23 @@ def normalize_file(
         filename=path,
         default_currency=default_currency,
         dedup=dedup,
+        invert_amount=invert_amount,
     )
 
 
 def normalize_many(
-    paths: list[str],
+    sources,
     *,
+    fmt: Optional[str] = None,
     default_currency: str = "USD",
+    invert_amount: bool = False,
 ) -> list[Transaction]:
-    """Normalize and merge multiple statement files, de-duplicating across them.
+    """Normalize and merge multiple statements, de-duplicating across them.
+
+    ``sources`` may be either a list of file paths (``["jan.ofx", "feb.ofx"]``)
+    or a list of ``(data, filename)`` tuples where ``data`` is bytes/str already
+    read into memory and ``filename`` (or ``None``) drives format detection. The
+    tuple form lets callers feed stdin or in-memory buffers.
 
     Per-statement multiplicity is computed first, then the max across all source
     statements is used so legitimate repeated charges survive while true
@@ -101,8 +136,25 @@ def normalize_many(
     """
     all_txns: list[Transaction] = []
     max_mult: dict[str, int] = {}
-    for path in paths:
-        statement = normalize_file(path, default_currency=default_currency, dedup=False)
+    for source in sources:
+        if isinstance(source, tuple):
+            data, filename = source
+            statement = normalize_bytes(
+                data,
+                fmt=fmt,
+                filename=filename,
+                default_currency=default_currency,
+                dedup=False,
+                invert_amount=invert_amount,
+            )
+        else:
+            statement = normalize_file(
+                source,
+                fmt=fmt,
+                default_currency=default_currency,
+                dedup=False,
+                invert_amount=invert_amount,
+            )
         all_txns.extend(statement.transactions)
         for chash, count in source_multiplicity(statement.transactions).items():
             if count > max_mult.get(chash, 0):

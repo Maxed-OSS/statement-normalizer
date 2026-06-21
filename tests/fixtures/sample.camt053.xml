@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-2024-01</MsgId>
+      <CreDtTm>2024-02-01T08:00:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-2024-01-001</Id>
+      <Acct>
+        <Id>
+          <IBAN>NL91ABNA0417164300</IBAN>
+        </Id>
+        <Ccy>EUR</Ccy>
+      </Acct>
+      <Ntry>
+        <Amt Ccy="EUR">45.20</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-01-05</Dt></BookgDt>
+        <AcctSvcrRef>REF1</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <RmtInf><Ustrd>CARD PAYMENT GAS STATION 4471</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">2500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-01-06</Dt></BookgDt>
+        <AcctSvcrRef>REF2</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <RmtInf><Ustrd>SEPA CREDIT PAYROLL ACME CORP</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">62.40</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-01-08</Dt></BookgDt>
+        <AcctSvcrRef>REF3</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <RmtInf><Ustrd>CARD PAYMENT GREEN GROCER MARKET</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>
