@@ -59,6 +59,11 @@ def looks_like_camt053(text: str) -> bool:
     return ("BkToCstmrStmt" in head or "camt.053" in head) and "<" in head
 
 
+def looks_like_camt052(text: str) -> bool:
+    head = text[:2048]
+    return ("BkToCstmrAcctRpt" in head or "camt.052" in head) and "<" in head
+
+
 def _parse_date(elem) -> Optional[_dt.date]:
     """Read a date from a ``<BookgDt>``/``<ValDt>`` block (``<Dt>`` or ``<DtTm>``)."""
     if elem is None:
@@ -97,20 +102,32 @@ def _entry_description(ntry: ET.Element) -> str:
     return " ".join(parts).strip()
 
 
-def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
-    """Parse CAMT.053 XML bytes/str into a NormalizedStatement."""
+def parse_camt(
+    data,
+    *,
+    container_tags,
+    source_format: str,
+    default_currency: str = "USD",
+    label: str = "CAMT",
+) -> NormalizedStatement:
+    """Parse an ISO 20022 CAMT entry container into a NormalizedStatement.
+
+    CAMT.053 (``BankToCustomerStatement``) and CAMT.052
+    (``BankToCustomerAccountReport``) share an identical entry shape; only the
+    top-level container element differs (``<Stmt>`` vs ``<Rpt>``). This helper
+    parses either by accepting the candidate ``container_tags`` to look for.
+    """
     text = _to_text(data)
-    if not looks_like_camt053(text):
-        raise ParseError("input does not look like CAMT.053")
 
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
-        raise ParseError(f"invalid CAMT.053 XML: {exc}") from exc
+        raise ParseError(f"invalid {label} XML: {exc}") from exc
 
-    stmt = _find(root, "Stmt")
+    stmt = _find(root, *container_tags)
     if stmt is None:
-        raise ParseError("CAMT.053 has no <Stmt> element")
+        wanted = "/".join(f"<{t}>" for t in container_tags)
+        raise ParseError(f"{label} has no {wanted} element")
 
     # Account id: <Acct><Id><IBAN> or <Othr><Id>.
     account_id: Optional[str] = None
@@ -171,7 +188,7 @@ def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
                 currency=ccy,
                 fitid=fitid,
                 account_id=account_id,
-                source_format="camt053",
+                source_format=source_format,
                 raw={"cdtdbtind": indicator},
             )
         )
@@ -180,5 +197,18 @@ def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
         transactions=txns,
         account_id=account_id,
         currency=statement_ccy,
+        source_format=source_format,
+    )
+
+
+def parse(data, *, default_currency: str = "USD") -> NormalizedStatement:
+    """Parse CAMT.053 XML bytes/str into a NormalizedStatement."""
+    if not looks_like_camt053(_to_text(data)):
+        raise ParseError("input does not look like CAMT.053")
+    return parse_camt(
+        data,
+        container_tags=("Stmt",),
         source_format="camt053",
+        default_currency=default_currency,
+        label="CAMT.053",
     )

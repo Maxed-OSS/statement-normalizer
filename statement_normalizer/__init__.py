@@ -1,7 +1,8 @@
 """statement-normalizer: deterministic, rule-based bank & credit-card statement parsing.
 
-Parses CSV, OFX/QFX, and simple text-table statements into a normalized
-Transaction schema. No machine learning, no network calls, fully deterministic.
+Parses CSV, OFX/QFX, MT940, CAMT.053, QIF, and simple text-table statements
+into a normalized Transaction schema. No machine learning, no network calls,
+fully deterministic.
 """
 
 from .schema import Transaction, NormalizedStatement, TxnType

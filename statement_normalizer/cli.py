@@ -47,8 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="statement-normalizer",
         description=(
             "Normalize bank & credit-card statements (CSV, OFX/QFX, MT940, "
-            "CAMT.053, text) into clean transaction JSON or CSV. Deterministic, "
-            "rule-based, no ML."
+            "CAMT.053, CAMT.052, QIF, text) into clean transaction JSON or CSV. "
+            "Deterministic, rule-based, no ML."
         ),
     )
     parser.add_argument(

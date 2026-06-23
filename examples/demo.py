@@ -53,9 +53,10 @@ def main() -> None:
                 f"  {txn.date}  {txn.amount:>10}  {txn.txn_type.value:<6}  {txn.description}"
             )
 
-    # 2. SWIFT MT940 and ISO 20022 CAMT.053.
+    # 2. SWIFT MT940, ISO 20022 CAMT.053, and Quicken QIF.
     show("sample.mt940")
     show("sample.camt053.xml")
+    show("sample.qif")
 
     # 3. Dedup / merge across two overlapping monthly exports.
     #    overlap_feb.csv re-includes the last 3 rows of overlap_jan.csv.

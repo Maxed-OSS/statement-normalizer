@@ -7,17 +7,34 @@ from typing import Optional
 
 from .dedup import dedup_transactions, source_multiplicity
 from .parsers import (
+    camt052_parser,
     camt053_parser,
     csv_parser,
     mt940_parser,
     ofx_parser,
+    qif_parser,
     text_parser,
 )
 from .schema import NormalizedStatement, Transaction
 from .util import ParseError
 
 # Format names accepted by ``format=`` overrides.
-FORMATS = ("csv", "ofx", "text", "mt940", "camt053")
+FORMATS = ("csv", "ofx", "text", "mt940", "camt053", "camt052", "qif")
+
+# Extensions that map to a single format. ``.xml`` is intentionally absent: it
+# falls through to content sniffing so CAMT.053 and CAMT.052 (both XML) can be
+# told apart by their container element.
+_EXT_TO_FORMAT = {
+    "ofx": "ofx",
+    "qfx": "ofx",
+    "csv": "csv",
+    "sta": "mt940",
+    "mt940": "mt940",
+    "940": "mt940",
+    "qif": "qif",
+    "txt": "text",
+    "text": "text",
+}
 
 
 def detect_format(data, *, filename: Optional[str] = None) -> str:
@@ -27,24 +44,25 @@ def detect_format(data, *, filename: Optional[str] = None) -> str:
     """
     if filename:
         ext = os.path.splitext(filename)[1].lower().lstrip(".")
-        if ext in ("ofx", "qfx"):
-            return "ofx"
-        if ext == "csv":
-            return "csv"
-        if ext in ("sta", "mt940", "940"):
-            return "mt940"
-        if ext in ("txt", "text"):
-            return "text"
-        # .xml falls through to content sniffing (CAMT vs other XML).
+        if ext in _EXT_TO_FORMAT:
+            return _EXT_TO_FORMAT[ext]
+        # .xml falls through to content sniffing (CAMT.053 vs CAMT.052).
 
     text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
     stripped = text.lstrip()
-    head = stripped[:512].upper()
+    head = stripped[:2048].upper()
 
     if "<OFX>" in head or "OFXHEADER" in head or "<STMTTRN>" in head:
         return "ofx"
+    # CAMT.052 (intra-day report) must be checked before CAMT.053 because some
+    # bundles carry both namespaces; the container element is the tiebreaker.
+    if "BKTOCSTMRACCTRPT" in head or "CAMT.052" in head:
+        return "camt052"
     if "BKTOCSTMRSTMT" in head or "CAMT.053" in head:
         return "camt053"
+    # QIF starts with a !Type:/!Account header line.
+    if head.startswith("!TYPE:") or head.startswith("!ACCOUNT"):
+        return "qif"
     # MT940: colon-tag fields (:20: / :25: / :61:).
     if mt940_parser.looks_like_mt940(text):
         return "mt940"
@@ -70,6 +88,10 @@ def _parse(
         return mt940_parser.parse(data, default_currency=default_currency)
     if fmt == "camt053":
         return camt053_parser.parse(data, default_currency=default_currency)
+    if fmt == "camt052":
+        return camt052_parser.parse(data, default_currency=default_currency)
+    if fmt == "qif":
+        return qif_parser.parse(data, default_currency=default_currency)
     raise ParseError(f"unknown format: {fmt!r}")
 
 

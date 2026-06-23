@@ -6,21 +6,26 @@
 Turn messy bank and credit-card statements into clean, normalized transaction
 JSON. Deterministic, rule-based, dependency-free, and easy to audit.
 
-No machine learning. No network calls. No surprises. Given the same input you
-get the same output, every time, which is exactly what you want when the data
-feeds bookkeeping, reconciliation, or any financial workflow.
+`statement-normalizer` reads the statement formats banks and cards actually
+export, CSV, OFX/QFX, MT940, CAMT.053, QIF, and line-oriented text, and emits a
+single normalized transaction schema with a consistent sign convention, parsed
+dates, and proper decimal amounts. Given the same input it produces the same
+output every time, which is exactly what you want when the data feeds
+bookkeeping, reconciliation, or any financial workflow.
 
 ## Why
 
 Every bank exports statements differently: some give you a single signed
 `Amount` column, others split `Debit` / `Credit`, some wrap negatives in
-parentheses, some hand you OFX/QFX, some only give you a PDF. Downstream tools
-all want the same thing: a tidy list of transactions with a consistent sign
-convention, parsed dates, and proper decimal amounts.
+parentheses, some hand you OFX/QFX or QIF, some only give you a PDF. Downstream
+tools all want the same thing: a tidy list of transactions with a consistent
+sign convention, parsed dates, and proper decimal amounts.
 
-`statement-normalizer` is the small, boring, well-tested glue layer that does
-exactly that and nothing more. It is meant to be a building block you can drop
-into an import pipeline, not a full accounting system.
+`statement-normalizer` does exactly that, and does it well. It is a focused,
+well-tested building block you can drop into an import pipeline: it parses the
+real-world export shapes, normalizes the sign convention, and de-duplicates
+across overlapping statements, so the rest of your pipeline only ever sees one
+clean schema.
 
 ## What it does
 
@@ -35,6 +40,13 @@ into an import pipeline, not a full accounting system.
     common for European business accounts.
   - **CAMT.053** — ISO 20022 `BankToCustomerStatement` XML, the modern standard
     replacing MT940. Parsed with the standard-library XML parser, namespace-agnostic.
+  - **CAMT.052** — ISO 20022 `BankToCustomerAccountReport` XML, the intra-day /
+    interim report banks send before the end-of-day CAMT.053 is cut. Same entry
+    model as CAMT.053; auto-detected from the container element so the two XML
+    shapes never get confused.
+  - **QIF** — Quicken Interchange Format (`.qif`), the long-lived plain-text
+    export used by Quicken and many banks and personal-finance tools. Parsed
+    with a small built-in tokenizer (no external QIF dependency).
   - **Text** — line-oriented statement text, e.g. the output of running a PDF
     through a text extractor like `pdftotext`.
 
@@ -47,6 +59,8 @@ into an import pipeline, not a full accounting system.
 | OFX / QFX | `.ofx` `.qfx` | signed `TRNAMT` | `ACCTID` | `FITID` | `CURDEF` |
 | MT940 | `.sta` `.940` `.mt940` | `D` / `C` mark on `:61:` | `:25:` | content hash | `:60F:` currency |
 | CAMT.053 | `.xml` (sniffed) | `CdtDbtInd` (`DBIT`/`CRDT`) | IBAN / `Othr` id | `AcctSvcrRef` | `Amt@Ccy` |
+| CAMT.052 | `.xml` (sniffed) | `CdtDbtInd` (`DBIT`/`CRDT`) | IBAN / `Othr` id | `AcctSvcrRef` | `Amt@Ccy` |
+| QIF | `.qif` | sign of `T` / `U` amount | – | content hash (`N` ref hint) | `--currency` default |
 | Text / PDF-text | `.txt` | sign / column heuristic | – | content hash | `--currency` default |
 
 All amounts are normalized to one sign convention (debits negative, credits
@@ -63,11 +77,12 @@ positive) regardless of how the source expressed direction.
   de-duplicated list.
 - Ships a CLI and a small Python API.
 
-### Out of scope (on purpose)
+### Boundaries
 
-- **Binary PDF decoding.** Pipe your PDF through a text extractor first, then
-  feed the text in. This keeps the library dependency-free and deterministic.
-- **Transaction categorization / ML.** This normalizes; it does not classify.
+- **Binary PDF workflows.** Pipe your PDF through a text extractor first, then
+  feed the text in.
+- **Transaction categorization.** Pair normalized output with your preferred
+  categorization layer.
 
 ## Install
 
@@ -92,9 +107,10 @@ statement-normalizer statement.csv --pretty
 # Force a format
 statement-normalizer --format ofx export.qfx
 
-# MT940 and CAMT.053 work the same way
+# MT940, CAMT.053, and QIF work the same way
 statement-normalizer export.sta --stats
 statement-normalizer --format camt053 statement.xml
+statement-normalizer export.qif --pretty
 
 # Merge overlapping monthly exports, de-duplicating across them
 statement-normalizer jan.csv feb.csv --merge -o all.json
@@ -120,7 +136,7 @@ statement-normalizer eu_statement.csv --currency EUR
 
 | Flag | Effect |
 |---|---|
-| `--format {csv,ofx,text,mt940,camt053}` | force input format (default: auto-detect) |
+| `--format {csv,ofx,text,mt940,camt053,qif}` | force input format (default: auto-detect) |
 | `--csv` | emit a flat transactions CSV instead of JSON |
 | `--stats` | print a counts/totals/date-range summary to stderr |
 | `--merge` | merge all inputs into one cross-statement-deduped list |
@@ -173,6 +189,7 @@ python examples/demo.py
 | `discover_creditcard.csv` | Discover `Trans. Date/Amount/Category` (charges positive) |
 | `sample.mt940` | SWIFT MT940 (`:25:`/`:60F:`/`:61:`/`:86:`) |
 | `sample.camt053.xml` | ISO 20022 CAMT.053 (`<Ntry>` / `CdtDbtInd`) |
+| `sample.qif` | Quicken QIF (`!Type:Bank`, `D`/`T`/`P`/`M`/`N`/`L` fields) |
 | `overlap_jan.csv`, `overlap_feb.csv` | two overlapping months for the dedup/merge demo |
 
 Dedup/merge across overlapping months in one line:

@@ -1,0 +1,23 @@
+!Type:Bank
+D03/01/2024
+T-58.99
+N2044
+PCORNER MARKET
+MGroceries
+LFood:Groceries
+^
+D03/04/2024
+T1,800.00
+PPAYROLL DEPOSIT
+LIncome:Salary
+^
+D03/09/2024
+T-95.40
+PCITY POWER UTILITY
+MMonthly electricity
+LBills:Utilities
+^
+D03/15'24
+T-432.10
+PRENT TRANSFER
+^
